@@ -12,17 +12,17 @@ def draw_hud(frame, mode: str, has_selection: bool) -> None:
     cv2.putText(frame, mode_text, (10, 40), FONT, 1, COLOR_WHITE, 2, cv2.LINE_AA)
 
     if mode == "IDLE":
-        instructions = "Point to TRANSFORM | Open palm to CREATE | Three fingers to DRAW"
+        instructions = "Point: TRANSFORM | Open palm: CREATE | Three fingers: DRAW | Fist: reset"
     elif mode == "CREATE":
-        instructions = "Pinch to create a shape | Open palm to exit"
+        instructions = "Thumbs up to create a shape | Fist: exit to IDLE"
     elif mode == "TRANSFORM":
         instructions = (
-            "Move hand to translate | Pinch to scale | Two fingers to rotate"
+            "Move: move shape | Pinch: scale | Twist index: rotate | Fist: exit to IDLE"
             if has_selection
-            else "Point at a shape and pinch to select | Pointing gesture to exit"
+            else "Point at a shape and pinch to select | Fist: exit to IDLE"
         )
     elif mode == "DRAW":
-        instructions = "Hold three-finger gesture to draw | Release to finish"
+        instructions = "Hold three fingers to draw | Release to finish | Fist: cancel and return to IDLE"
     else:
         instructions = ""
 

@@ -11,30 +11,6 @@ DRAW_END_FRAMES = 3
 EXIT_FRAMES = 3
 
 
-class DrawGestureState:
-    """Debounce draw gesture on/off transitions."""
-
-    def __init__(self, start_frames: int = DRAW_START_FRAMES, end_frames: int = DRAW_END_FRAMES) -> None:
-        self.start_frames = start_frames
-        self.end_frames = end_frames
-        self.on_count = 0
-        self.off_count = 0
-        self.is_active = False
-
-    def update(self, is_raw_on: bool) -> bool:
-        if is_raw_on:
-            self.on_count += 1
-            self.off_count = 0
-            if not self.is_active and self.on_count >= self.start_frames:
-                self.is_active = True
-        else:
-            self.off_count += 1
-            self.on_count = 0
-            if self.is_active and self.off_count >= self.end_frames:
-                self.is_active = False
-        return self.is_active
-
-
 class DebouncedFlag:
     """Generic debounce helper for a boolean signal."""
 
@@ -57,6 +33,16 @@ class DebouncedFlag:
             if self.is_active and self.off_count >= self.off_frames:
                 self.is_active = False
         return self.is_active
+
+
+class DrawGestureState:
+    """Debounce draw gesture on/off transitions."""
+
+    def __init__(self, start_frames: int = DRAW_START_FRAMES, end_frames: int = DRAW_END_FRAMES) -> None:
+        self.flag = DebouncedFlag(on_frames=start_frames, off_frames=end_frames)
+
+    def update(self, is_raw_on: bool) -> bool:
+        return self.flag.update(is_raw_on)
 
 
 class GestureInterpreter:
@@ -92,9 +78,12 @@ class GestureInterpreter:
         is_two_finger_point = index_up and middle_up and not ring_up and not pinky_up
         is_open_palm = index_up and middle_up and ring_up and pinky_up
         is_pointing = index_up and not middle_up and not ring_up and not pinky_up
-        is_draw_gesture = index_up and middle_up and ring_up and not pinky_up
+        is_three_finger = index_up and middle_up and ring_up and not pinky_up
+        is_thumb_up = thumb_open and not (index_up or middle_up or ring_up or pinky_up)
+        is_draw_gesture = is_three_finger
         is_draw_active = self._draw_state.update(is_draw_gesture)
-        is_fist = not (index_up or middle_up or ring_up or pinky_up or thumb_open)
+        all_fingers_down = not (index_up or middle_up or ring_up or pinky_up)
+        is_fist = all_fingers_down
         is_exit_gesture = self._exit_state.update(is_fist)
 
         return {
@@ -104,6 +93,8 @@ class GestureInterpreter:
             "is_open_palm": is_open_palm,
             "is_pointing": is_pointing,
             "thumb_open": thumb_open,
+            "is_three_finger": is_three_finger,
+            "is_thumb_up": is_thumb_up,
             "is_draw_gesture": is_draw_gesture,
             "is_draw_active": is_draw_active,
             "is_exit_gesture": is_exit_gesture,

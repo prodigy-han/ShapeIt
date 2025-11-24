@@ -15,8 +15,7 @@ STROKE_MIN_STEP = 5.0
 STROKE_MIN_POINTS = 5
 STROKE_EPSILON = 4.0
 PINCH_SELECT_THRESHOLD = 0.45
-PINCH_RELEASE_THRESHOLD = 0.9
-PINCH_RELEASE_FRAMES = 3
+EXIT_COOLDOWN_FRAMES = 8
 
 
 class Controller:
@@ -29,35 +28,30 @@ class Controller:
         ]
         self.selected_shape: Optional[Shape2D] = None
 
-        # Debounce state
-        self._last_gesture: Optional[str] = None
-        self._gesture_frames: int = 0
-        self._frame_index: int = 0
-        self._mode_cooldown_frames = 30
-        self._last_mode_switch_frame = -self._mode_cooldown_frames
-        self._debounce_frames = 10
-
         # Transform baselines
         self.grab_offset: Optional[np.ndarray] = None
         self.base_size: Optional[float] = None
         self.base_pinch: Optional[float] = None
         self.base_shape_angle: Optional[float] = None
         self.base_finger_angle: Optional[float] = None
+        self.base_center: Optional[np.ndarray] = None
         self.is_grabbing: bool = False
-        self._release_frames: int = 0
 
         # Drawing
         self.current_stroke: list[np.ndarray] = []
         self.is_drawing: bool = False
+        self._mode_switch_cooldown: int = 0
 
     def update(self, gestures: Optional[dict], points: Optional[Sequence[Sequence[float]]]) -> None:
-        self._frame_index += 1
         if gestures is None or points is None:
             return
 
         if gestures.get("is_exit_gesture"):
             self._exit_to_idle()
             return
+
+        if self._mode_switch_cooldown > 0:
+            self._mode_switch_cooldown -= 1
 
         self._maybe_switch_mode(gestures)
 
@@ -79,53 +73,36 @@ class Controller:
             render2d.draw_shape(frame, temp_poly, highlight=False, highlight_color=COLOR_SELECTED)
 
     def _maybe_switch_mode(self, gestures: dict) -> None:
-        persistent = None
-        if gestures.get("is_open_palm"):
-            persistent = "open_palm"
-        elif gestures.get("is_pointing"):
-            persistent = "pointing"
-        elif gestures.get("is_draw_gesture"):
-            persistent = "draw"
-
-        if persistent != self._last_gesture:
-            self._last_gesture = persistent
-            self._gesture_frames = 0
-
-        if persistent is None:
+        if self._mode_switch_cooldown > 0:
             return
 
-        self._gesture_frames += 1
-        if persistent == "draw":
-            if (
-                self.mode != modes.DRAW
-                and self._gesture_frames >= self._debounce_frames
-                and self._frame_index - self._last_mode_switch_frame >= self._mode_cooldown_frames
-            ):
-                self.mode = modes.DRAW
-                self._last_mode_switch_frame = self._frame_index
-                self._gesture_frames = 0
+        if self.mode == modes.DRAW:
+            # Remain in DRAW unless explicitly exiting via fist.
             return
 
-        if (
-            self._gesture_frames >= self._debounce_frames
-            and self._frame_index - self._last_mode_switch_frame >= self._mode_cooldown_frames
-        ):
-            if persistent == "open_palm":
-                self._toggle_mode(modes.CREATE)
-            elif persistent == "pointing":
-                self._toggle_mode(modes.TRANSFORM)
-            self._last_mode_switch_frame = self._frame_index
-            self._gesture_frames = 0
-
-    def _toggle_mode(self, target_mode: str) -> None:
-        if self.mode == target_mode:
-            self.mode = modes.IDLE
+        if self.mode == modes.IDLE:
+            if gestures.get("is_open_palm"):
+                self._set_mode(modes.CREATE)
+                return
+            if gestures.get("is_pointing"):
+                self._set_mode(modes.TRANSFORM)
+                return
+            if gestures.get("is_three_finger") or gestures.get("is_draw_active"):
+                self._set_mode(modes.DRAW)
+                return
         else:
-            self.mode = target_mode
+            # Only allow pointing to move into TRANSFORM from other modes; ignore open palm while active.
+            if gestures.get("is_pointing"):
+                self._set_mode(modes.TRANSFORM)
+                return
+            # Draw can only be entered from IDLE
+
+    def _set_mode(self, target_mode: str) -> None:
+        self.mode = target_mode
         if self.mode != modes.TRANSFORM:
             self._deselect()
         if self.mode != modes.DRAW:
-            self._end_stroke()
+            self._clear_stroke()
 
     def _deselect(self) -> None:
         if self.selected_shape:
@@ -136,11 +113,11 @@ class Controller:
         self.base_pinch = None
         self.base_shape_angle = None
         self.base_finger_angle = None
+        self.base_center = None
         self.is_grabbing = False
-        self._release_frames = 0
 
     def _handle_create_mode(self, gestures: dict, points: Sequence[Sequence[float]]) -> None:
-        if not gestures.get("is_pinching"):
+        if not gestures.get("is_thumb_up"):
             return
         index_tip = points[8]
         for shape in self.shapes:
@@ -160,14 +137,6 @@ class Controller:
                     self._select_shape(shape, points, gestures)
                     break
         else:
-            pinch_ratio = gestures.get("pinch_ratio", 1.0)
-            if pinch_ratio > PINCH_RELEASE_THRESHOLD:
-                self._release_frames += 1
-                if self._release_frames >= PINCH_RELEASE_FRAMES:
-                    self._deselect()
-                    return
-            else:
-                self._release_frames = 0
             self.is_grabbing = True
             self._apply_transform(gestures, points)
 
@@ -178,6 +147,7 @@ class Controller:
         self.selected_shape = shape
         anchor = np.asarray(points[9], dtype=float)
         self.grab_offset = shape.center - anchor
+        self.base_center = np.asarray(shape.center, dtype=float)
         self.base_size = shape.size
         self.base_pinch = gestures.get("pinch_ratio")
         self.base_shape_angle = shape.angle
@@ -198,7 +168,7 @@ class Controller:
 
         pinch_ratio = gestures.get("pinch_ratio", 0.0)
         if self.base_pinch and pinch_ratio > 1e-6:
-            scale_factor = self.base_pinch / pinch_ratio
+            scale_factor = pinch_ratio / self.base_pinch
             shape.target_size = features.clamp(self.base_size * scale_factor, 20.0, 600.0)
 
         finger_angle = features.angle_degrees(points[5], points[8])
@@ -240,7 +210,12 @@ class Controller:
         self.shapes.append(polyline)
         self.mode = modes.IDLE
 
+    def _clear_stroke(self) -> None:
+        self.current_stroke = []
+        self.is_drawing = False
+
     def _exit_to_idle(self) -> None:
         self._deselect()
-        self._end_stroke()
+        self._clear_stroke()
         self.mode = modes.IDLE
+        self._mode_switch_cooldown = EXIT_COOLDOWN_FRAMES
