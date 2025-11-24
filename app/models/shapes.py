@@ -5,6 +5,7 @@ from typing import Sequence, Tuple
 import numpy as np
 
 SMOOTHING = 0.35  # lower = more smoothing
+SEGMENT_TOLERANCE = 8.0
 
 
 def _normalize_angle(delta: float) -> float:
@@ -62,3 +63,37 @@ class Shape2D:
         angle_delta = _normalize_angle(self.target_angle - self.angle)
         self.angle = (self.angle + angle_delta * SMOOTHING) % 360.0
 
+
+@dataclass
+class PolylineShape:
+    points: list[np.ndarray]
+    color: ColorBGR = (0, 165, 255)
+    thickness: int = 3
+    tolerance: float = SEGMENT_TOLERANCE
+    is_selected: bool = False
+
+    def update(self) -> None:
+        # No smoothing needed for static polylines.
+        return
+
+    def contains_point(self, point: Sequence[float]) -> bool:
+        px, py = float(point[0]), float(point[1])
+        if len(self.points) < 2:
+            return False
+        for i in range(len(self.points) - 1):
+            if _point_segment_distance((px, py), self.points[i], self.points[i + 1]) <= self.tolerance:
+                return True
+        return False
+
+
+def _point_segment_distance(point: Sequence[float], start: Sequence[float], end: Sequence[float]) -> float:
+    px, py = float(point[0]), float(point[1])
+    x1, y1 = float(start[0]), float(start[1])
+    x2, y2 = float(end[0]), float(end[1])
+    dx, dy = x2 - x1, y2 - y1
+    if dx == 0 and dy == 0:
+        return math.hypot(px - x1, py - y1)
+    t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)
+    t = max(0.0, min(1.0, t))
+    proj_x, proj_y = x1 + t * dx, y1 + t * dy
+    return math.hypot(px - proj_x, py - proj_y)

@@ -39,6 +39,7 @@ class GestureInterpreter:
         is_two_finger_point = index_up and middle_up and not ring_up and not pinky_up
         is_open_palm = index_up and middle_up and ring_up and pinky_up
         is_pointing = index_up and not middle_up and not ring_up and not pinky_up
+        is_draw_gesture = index_up and middle_up and ring_up and not pinky_up
 
         return {
             "pinch_ratio": pinch_ratio,
@@ -47,5 +48,5 @@ class GestureInterpreter:
             "is_open_palm": is_open_palm,
             "is_pointing": is_pointing,
             "thumb_open": thumb_open,
+            "is_draw_gesture": is_draw_gesture,
         }
-

@@ -5,12 +5,15 @@ from typing import List, Optional, Sequence
 import numpy as np
 
 from app.input import features
-from app.models.shapes import Shape2D
+from app.models.shapes import PolylineShape, Shape2D
 from app.render import render2d
 from app.state import modes
 
 COLOR_SELECTED = (50, 255, 50)
 DEFAULT_COLOR = (255, 100, 50)
+STROKE_MIN_STEP = 5.0
+STROKE_MIN_POINTS = 5
+STROKE_EPSILON = 4.0
 
 
 class Controller:
@@ -38,6 +41,10 @@ class Controller:
         self.base_shape_angle: Optional[float] = None
         self.base_finger_angle: Optional[float] = None
 
+        # Drawing
+        self.current_stroke: list[np.ndarray] = []
+        self.is_drawing: bool = False
+
     def update(self, gestures: Optional[dict], points: Optional[Sequence[Sequence[float]]]) -> None:
         self._frame_index += 1
         if gestures is None or points is None:
@@ -51,11 +58,16 @@ class Controller:
             self._handle_create_mode(gestures, points)
         elif self.mode == modes.TRANSFORM:
             self._handle_transform_mode(gestures, points)
+        elif self.mode == modes.DRAW:
+            self._handle_draw_mode(gestures, points)
 
     def render(self, frame) -> None:
         for shape in self.shapes:
             shape.update()
             render2d.draw_shape(frame, shape, highlight=shape.is_selected, highlight_color=COLOR_SELECTED)
+        if self.is_drawing and len(self.current_stroke) > 1:
+            temp_poly = PolylineShape(points=self.current_stroke, color=(0, 200, 255), thickness=2)
+            render2d.draw_shape(frame, temp_poly, highlight=False, highlight_color=COLOR_SELECTED)
 
     def _maybe_switch_mode(self, gestures: dict) -> None:
         persistent = None
@@ -63,6 +75,8 @@ class Controller:
             persistent = "open_palm"
         elif gestures.get("is_pointing"):
             persistent = "pointing"
+        elif gestures.get("is_draw_gesture"):
+            persistent = "draw"
 
         if persistent != self._last_gesture:
             self._last_gesture = persistent
@@ -80,6 +94,8 @@ class Controller:
                 self._toggle_mode(modes.CREATE)
             elif persistent == "pointing":
                 self._toggle_mode(modes.TRANSFORM)
+            elif persistent == "draw":
+                self._toggle_mode(modes.DRAW)
             self._last_mode_switch_frame = self._frame_index
             self._gesture_frames = 0
 
@@ -90,6 +106,8 @@ class Controller:
             self.mode = target_mode
         if self.mode != modes.TRANSFORM:
             self._deselect()
+        if self.mode != modes.DRAW:
+            self._end_stroke()
 
     def _deselect(self) -> None:
         if self.selected_shape:
@@ -106,7 +124,7 @@ class Controller:
             return
         index_tip = points[8]
         for shape in self.shapes:
-            if features.distance(shape.center, index_tip) < shape.size:
+            if isinstance(shape, Shape2D) and features.distance(shape.center, index_tip) < shape.size:
                 return
         self.shapes.append(Shape2D(center=np.array(index_tip), size=100, color=(0, 165, 255)))
         self.mode = modes.IDLE
@@ -117,7 +135,7 @@ class Controller:
                 return
             index_tip = points[8]
             for shape in reversed(self.shapes):
-                if shape.contains_point(index_tip):
+                if isinstance(shape, Shape2D) and shape.contains_point(index_tip):
                     self._select_shape(shape, points, gestures)
                     break
         else:
@@ -140,7 +158,7 @@ class Controller:
 
     def _apply_transform(self, gestures: dict, points: Sequence[Sequence[float]]) -> None:
         shape = self.selected_shape
-        if shape is None:
+        if shape is None or not isinstance(shape, Shape2D):
             return
 
         anchor = np.asarray(points[9], dtype=float)  # middle finger MCP for stability
@@ -162,3 +180,35 @@ class Controller:
         else:
             self.base_finger_angle = None
             self.base_shape_angle = shape.angle
+
+    def _handle_draw_mode(self, gestures: dict, points: Sequence[Sequence[float]]) -> None:
+        draw_active = bool(gestures.get("is_draw_gesture"))
+        index_tip = np.asarray(points[8], dtype=float)
+
+        if draw_active and not self.is_drawing:
+            self.is_drawing = True
+            self.current_stroke = [index_tip]
+        elif draw_active and self.is_drawing:
+            if self.current_stroke:
+                last_pt = self.current_stroke[-1]
+                if np.linalg.norm(index_tip - last_pt) >= STROKE_MIN_STEP:
+                    self.current_stroke.append(index_tip)
+        elif self.is_drawing and not draw_active:
+            self._end_stroke()
+
+    def _end_stroke(self) -> None:
+        if not self.current_stroke:
+            self.is_drawing = False
+            return
+        points = self.current_stroke
+        self.current_stroke = []
+        self.is_drawing = False
+
+        if len(points) < STROKE_MIN_POINTS:
+            self.mode = modes.IDLE
+            return
+
+        simplified = features.rdp(points, epsilon=STROKE_EPSILON)
+        polyline = PolylineShape(points=[np.asarray(p, dtype=float) for p in simplified], color=(0, 0, 255), thickness=3)
+        self.shapes.append(polyline)
+        self.mode = modes.IDLE
