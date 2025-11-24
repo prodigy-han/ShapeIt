@@ -14,6 +14,9 @@ DEFAULT_COLOR = (255, 100, 50)
 STROKE_MIN_STEP = 5.0
 STROKE_MIN_POINTS = 5
 STROKE_EPSILON = 4.0
+PINCH_SELECT_THRESHOLD = 0.45
+PINCH_RELEASE_THRESHOLD = 0.9
+PINCH_RELEASE_FRAMES = 3
 
 
 class Controller:
@@ -40,6 +43,8 @@ class Controller:
         self.base_pinch: Optional[float] = None
         self.base_shape_angle: Optional[float] = None
         self.base_finger_angle: Optional[float] = None
+        self.is_grabbing: bool = False
+        self._release_frames: int = 0
 
         # Drawing
         self.current_stroke: list[np.ndarray] = []
@@ -48,6 +53,10 @@ class Controller:
     def update(self, gestures: Optional[dict], points: Optional[Sequence[Sequence[float]]]) -> None:
         self._frame_index += 1
         if gestures is None or points is None:
+            return
+
+        if gestures.get("is_exit_gesture"):
+            self._exit_to_idle()
             return
 
         self._maybe_switch_mode(gestures)
@@ -127,6 +136,8 @@ class Controller:
         self.base_pinch = None
         self.base_shape_angle = None
         self.base_finger_angle = None
+        self.is_grabbing = False
+        self._release_frames = 0
 
     def _handle_create_mode(self, gestures: dict, points: Sequence[Sequence[float]]) -> None:
         if not gestures.get("is_pinching"):
@@ -140,7 +151,8 @@ class Controller:
 
     def _handle_transform_mode(self, gestures: dict, points: Sequence[Sequence[float]]) -> None:
         if self.selected_shape is None:
-            if not gestures.get("is_pinching"):
+            pinch_ratio = gestures.get("pinch_ratio", 1.0)
+            if not gestures.get("is_pinching") or pinch_ratio > PINCH_SELECT_THRESHOLD:
                 return
             index_tip = points[8]
             for shape in reversed(self.shapes):
@@ -148,9 +160,15 @@ class Controller:
                     self._select_shape(shape, points, gestures)
                     break
         else:
-            if not gestures.get("is_pinching"):
-                self._deselect()
-                return
+            pinch_ratio = gestures.get("pinch_ratio", 1.0)
+            if pinch_ratio > PINCH_RELEASE_THRESHOLD:
+                self._release_frames += 1
+                if self._release_frames >= PINCH_RELEASE_FRAMES:
+                    self._deselect()
+                    return
+            else:
+                self._release_frames = 0
+            self.is_grabbing = True
             self._apply_transform(gestures, points)
 
     def _select_shape(self, shape: Shape2D, points: Sequence[Sequence[float]], gestures: dict) -> None:
@@ -164,10 +182,14 @@ class Controller:
         self.base_pinch = gestures.get("pinch_ratio")
         self.base_shape_angle = shape.angle
         self.base_finger_angle = features.angle_degrees(points[5], points[8])
+        self.is_grabbing = True
+        self._release_frames = 0
 
     def _apply_transform(self, gestures: dict, points: Sequence[Sequence[float]]) -> None:
         shape = self.selected_shape
         if shape is None or not isinstance(shape, Shape2D):
+            return
+        if not self.is_grabbing:
             return
 
         anchor = np.asarray(points[9], dtype=float)  # middle finger MCP for stability
@@ -216,4 +238,9 @@ class Controller:
         simplified = features.rdp(points, epsilon=STROKE_EPSILON)
         polyline = PolylineShape(points=[np.asarray(p, dtype=float) for p in simplified], color=(0, 0, 255), thickness=3)
         self.shapes.append(polyline)
+        self.mode = modes.IDLE
+
+    def _exit_to_idle(self) -> None:
+        self._deselect()
+        self._end_stroke()
         self.mode = modes.IDLE

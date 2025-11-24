@@ -13,6 +13,7 @@ def test_transform_baseline_updates_targets():
     controller.base_pinch = 0.5
     controller.base_shape_angle = 10.0
     controller.base_finger_angle = 0.0
+    controller.is_grabbing = True
 
     points = [(0.0, 0.0)] * 21
     points[9] = (100.0, 100.0)  # anchor

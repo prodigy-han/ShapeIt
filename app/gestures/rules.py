@@ -8,6 +8,7 @@ PINCH_START = 0.35
 PINCH_END = 0.45
 DRAW_START_FRAMES = 3
 DRAW_END_FRAMES = 3
+EXIT_FRAMES = 3
 
 
 class DrawGestureState:
@@ -34,6 +35,30 @@ class DrawGestureState:
         return self.is_active
 
 
+class DebouncedFlag:
+    """Generic debounce helper for a boolean signal."""
+
+    def __init__(self, on_frames: int, off_frames: int) -> None:
+        self.on_frames = on_frames
+        self.off_frames = off_frames
+        self.on_count = 0
+        self.off_count = 0
+        self.is_active = False
+
+    def update(self, raw_on: bool) -> bool:
+        if raw_on:
+            self.on_count += 1
+            self.off_count = 0
+            if not self.is_active and self.on_count >= self.on_frames:
+                self.is_active = True
+        else:
+            self.off_count += 1
+            self.on_count = 0
+            if self.is_active and self.off_count >= self.off_frames:
+                self.is_active = False
+        return self.is_active
+
+
 class GestureInterpreter:
     """Gesture rule engine with pinch hysteresis."""
 
@@ -42,6 +67,7 @@ class GestureInterpreter:
         self.pinch_end = pinch_end
         self._is_pinching = False
         self._draw_state = DrawGestureState()
+        self._exit_state = DebouncedFlag(on_frames=EXIT_FRAMES, off_frames=EXIT_FRAMES)
 
     @staticmethod
     def _finger_up(points: Sequence[Sequence[float]], tip_idx: int, pip_idx: int) -> bool:
@@ -68,6 +94,8 @@ class GestureInterpreter:
         is_pointing = index_up and not middle_up and not ring_up and not pinky_up
         is_draw_gesture = index_up and middle_up and ring_up and not pinky_up
         is_draw_active = self._draw_state.update(is_draw_gesture)
+        is_fist = not (index_up or middle_up or ring_up or pinky_up or thumb_open)
+        is_exit_gesture = self._exit_state.update(is_fist)
 
         return {
             "pinch_ratio": pinch_ratio,
@@ -78,4 +106,5 @@ class GestureInterpreter:
             "thumb_open": thumb_open,
             "is_draw_gesture": is_draw_gesture,
             "is_draw_active": is_draw_active,
+            "is_exit_gesture": is_exit_gesture,
         }
