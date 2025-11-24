@@ -6,6 +6,32 @@ from app.input.features import pinch_ratio as compute_pinch_ratio
 
 PINCH_START = 0.35
 PINCH_END = 0.45
+DRAW_START_FRAMES = 3
+DRAW_END_FRAMES = 3
+
+
+class DrawGestureState:
+    """Debounce draw gesture on/off transitions."""
+
+    def __init__(self, start_frames: int = DRAW_START_FRAMES, end_frames: int = DRAW_END_FRAMES) -> None:
+        self.start_frames = start_frames
+        self.end_frames = end_frames
+        self.on_count = 0
+        self.off_count = 0
+        self.is_active = False
+
+    def update(self, is_raw_on: bool) -> bool:
+        if is_raw_on:
+            self.on_count += 1
+            self.off_count = 0
+            if not self.is_active and self.on_count >= self.start_frames:
+                self.is_active = True
+        else:
+            self.off_count += 1
+            self.on_count = 0
+            if self.is_active and self.off_count >= self.end_frames:
+                self.is_active = False
+        return self.is_active
 
 
 class GestureInterpreter:
@@ -15,6 +41,7 @@ class GestureInterpreter:
         self.pinch_start = pinch_start
         self.pinch_end = pinch_end
         self._is_pinching = False
+        self._draw_state = DrawGestureState()
 
     @staticmethod
     def _finger_up(points: Sequence[Sequence[float]], tip_idx: int, pip_idx: int) -> bool:
@@ -40,6 +67,7 @@ class GestureInterpreter:
         is_open_palm = index_up and middle_up and ring_up and pinky_up
         is_pointing = index_up and not middle_up and not ring_up and not pinky_up
         is_draw_gesture = index_up and middle_up and ring_up and not pinky_up
+        is_draw_active = self._draw_state.update(is_draw_gesture)
 
         return {
             "pinch_ratio": pinch_ratio,
@@ -49,4 +77,5 @@ class GestureInterpreter:
             "is_pointing": is_pointing,
             "thumb_open": thumb_open,
             "is_draw_gesture": is_draw_gesture,
+            "is_draw_active": is_draw_active,
         }

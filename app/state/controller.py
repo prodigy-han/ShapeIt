@@ -86,6 +86,17 @@ class Controller:
             return
 
         self._gesture_frames += 1
+        if persistent == "draw":
+            if (
+                self.mode != modes.DRAW
+                and self._gesture_frames >= self._debounce_frames
+                and self._frame_index - self._last_mode_switch_frame >= self._mode_cooldown_frames
+            ):
+                self.mode = modes.DRAW
+                self._last_mode_switch_frame = self._frame_index
+                self._gesture_frames = 0
+            return
+
         if (
             self._gesture_frames >= self._debounce_frames
             and self._frame_index - self._last_mode_switch_frame >= self._mode_cooldown_frames
@@ -94,8 +105,6 @@ class Controller:
                 self._toggle_mode(modes.CREATE)
             elif persistent == "pointing":
                 self._toggle_mode(modes.TRANSFORM)
-            elif persistent == "draw":
-                self._toggle_mode(modes.DRAW)
             self._last_mode_switch_frame = self._frame_index
             self._gesture_frames = 0
 
@@ -139,7 +148,7 @@ class Controller:
                     self._select_shape(shape, points, gestures)
                     break
         else:
-            if not gestures.get("is_pinching") and not gestures.get("is_two_finger_point"):
+            if not gestures.get("is_pinching"):
                 self._deselect()
                 return
             self._apply_transform(gestures, points)
@@ -154,7 +163,7 @@ class Controller:
         self.base_size = shape.size
         self.base_pinch = gestures.get("pinch_ratio")
         self.base_shape_angle = shape.angle
-        self.base_finger_angle = features.angle_degrees(points[8], points[12])
+        self.base_finger_angle = features.angle_degrees(points[5], points[8])
 
     def _apply_transform(self, gestures: dict, points: Sequence[Sequence[float]]) -> None:
         shape = self.selected_shape
@@ -170,19 +179,15 @@ class Controller:
             scale_factor = self.base_pinch / pinch_ratio
             shape.target_size = features.clamp(self.base_size * scale_factor, 20.0, 600.0)
 
-        if gestures.get("is_two_finger_point"):
-            finger_angle = features.angle_degrees(points[8], points[12])
-            if self.base_finger_angle is None:
-                self.base_finger_angle = finger_angle
-                self.base_shape_angle = shape.angle
-            angle_delta = finger_angle - self.base_finger_angle
-            shape.target_angle = self.base_shape_angle + angle_delta
-        else:
-            self.base_finger_angle = None
+        finger_angle = features.angle_degrees(points[5], points[8])
+        if self.base_finger_angle is None:
+            self.base_finger_angle = finger_angle
             self.base_shape_angle = shape.angle
+        angle_delta = finger_angle - self.base_finger_angle
+        shape.target_angle = self.base_shape_angle + angle_delta
 
     def _handle_draw_mode(self, gestures: dict, points: Sequence[Sequence[float]]) -> None:
-        draw_active = bool(gestures.get("is_draw_gesture"))
+        draw_active = bool(gestures.get("is_draw_active"))
         index_tip = np.asarray(points[8], dtype=float)
 
         if draw_active and not self.is_drawing:

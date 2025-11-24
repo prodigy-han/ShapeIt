@@ -16,8 +16,9 @@ def test_transform_baseline_updates_targets():
 
     points = [(0.0, 0.0)] * 21
     points[9] = (100.0, 100.0)  # anchor
-    points[8] = (110.0, 100.0)
-    points[12] = (110.0, 0.0)  # finger angle -90 degrees
+    points[5] = (110.0, 100.0)  # index MCP to define rotation vector
+    points[8] = (110.0, 0.0)
+    points[12] = (110.0, 0.0)  # unused now
 
     gestures = {"pinch_ratio": 0.25, "is_two_finger_point": True}
 
@@ -26,4 +27,3 @@ def test_transform_baseline_updates_targets():
     assert np.allclose(shape.target_center, np.array([110.0, 95.0]))
     assert shape.target_size == pytest.approx(200.0)
     assert shape.target_angle == pytest.approx(-80.0)
-
