@@ -1,5 +1,4 @@
 import time
-
 import cv2
 
 from app.gestures.rules import GestureInterpreter
